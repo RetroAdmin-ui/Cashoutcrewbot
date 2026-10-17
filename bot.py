@@ -6,7 +6,7 @@ from datetime import datetime
 import aiosqlite
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -52,6 +52,9 @@ async def init_db():
                 file_id TEXT,
                 caption TEXT,
                 created_at TEXT,
+                xp INTEGER DEFAULT 0,
+                tickets INTEGER DEFAULT 0,
+                confirmed INTEGER DEFAULT 0,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         """)
@@ -127,23 +130,106 @@ async def handle_photo(message: Message):
             (user.id, photo.file_id, caption, datetime.utcnow().isoformat())
         )
         await db.commit()
+        async with db.execute("SELECT last_insert_rowid()") as cursor:
+            deposit_id = (await cursor.fetchone())[0]
 
     await message.answer("✅ Einzahlung gespeichert. Danke!")
 
-    # Admins benachrichtigen
+    # Admins benachrichtigen – nur eine Nachricht mit Bild + Buttons
     admin_ids = await get_admin_ids()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="+10 XP", callback_data=f"xp:{deposit_id}:10"),
+            InlineKeyboardButton(text="+25 XP", callback_data=f"xp:{deposit_id}:25"),
+            InlineKeyboardButton(text="+50 XP", callback_data=f"xp:{deposit_id}:50"),
+        ],
+        [
+            InlineKeyboardButton(text="+5 Tickets", callback_data=f"tickets:{deposit_id}:5"),
+            InlineKeyboardButton(text="+10 Tickets", callback_data=f"tickets:{deposit_id}:10"),
+            InlineKeyboardButton(text="+25 Tickets", callback_data=f"tickets:{deposit_id}:25"),
+        ],
+        [
+            InlineKeyboardButton(text="✅ Bestätigen", callback_data=f"confirm:{deposit_id}"),
+        ]
+    ])
+
     for admin_id in admin_ids:
         try:
-            await bot.send_message(
+            await bot.send_photo(
                 admin_id,
-                f"Neue Einzahlung von @{user.username or user.first_name} (ID: {user.id})"
+                photo.file_id,
+                caption=f"Neue Einzahlung von @{user.username or user.first_name} (ID: {user.id})\n\n{caption or ''}",
+                reply_markup=keyboard
             )
-            await bot.send_photo(admin_id, photo.file_id, caption=caption or None)
         except Exception as e:
             logger.warning(f"Konnte Admin {admin_id} nicht benachrichtigen: {e}")
 
 
-# ---------- Admin-Befehle ----------
+# ---------- Callbacks für XP / Tickets ----------
+@dp.callback_query(F.data.startswith("xp:"))
+async def cb_xp(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Nur Admins", show_alert=True)
+        return
+    _, dep_id, amount = callback.data.split(":")
+    dep_id, amount = int(dep_id), int(amount)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE deposits SET xp = xp + ? WHERE id = ?", (amount, dep_id))
+        await db.commit()
+        async with db.execute("SELECT xp FROM deposits WHERE id = ?", (dep_id,)) as c:
+            xp = (await c.fetchone())[0]
+    await callback.answer(f"+{amount} XP (gesamt: {xp})")
+    # Optional: Caption aktualisieren
+    try:
+        await callback.message.edit_caption(
+            caption=callback.message.caption + f"\n\nXP: {xp}",
+            reply_markup=callback.message.reply_markup
+        )
+    except Exception:
+        pass
+
+
+@dp.callback_query(F.data.startswith("tickets:"))
+async def cb_tickets(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Nur Admins", show_alert=True)
+        return
+    _, dep_id, amount = callback.data.split(":")
+    dep_id, amount = int(dep_id), int(amount)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE deposits SET tickets = tickets + ? WHERE id = ?", (amount, dep_id))
+        await db.commit()
+        async with db.execute("SELECT tickets FROM deposits WHERE id = ?", (dep_id,)) as c:
+            tickets = (await c.fetchone())[0]
+    await callback.answer(f"+{amount} Tickets (gesamt: {tickets})")
+    try:
+        await callback.message.edit_caption(
+            caption=callback.message.caption + f"\nTickets: {tickets}",
+            reply_markup=callback.message.reply_markup
+        )
+    except Exception:
+        pass
+
+
+@dp.callback_query(F.data.startswith("confirm:"))
+async def cb_confirm(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Nur Admins", show_alert=True)
+        return
+    dep_id = int(callback.data.split(":")[1])
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE deposits SET confirmed = 1 WHERE id = ?", (dep_id,))
+        await db.commit()
+        async with db.execute("SELECT user_id, xp, tickets FROM deposits WHERE id = ?", (dep_id,)) as c:
+            row = await c.fetchone()
+    await callback.answer("✅ Bestätigt und gespeichert")
+    await callback.message.edit_caption(
+        caption=callback.message.caption + "\n\n✅ Bestätigt",
+        reply_markup=None
+    )
+    # Hier später XP/Tickets dem User gutschreiben und Mini-App aktualisieren
+
+
 @dp.message(Command("addadmin"))
 async def cmd_addadmin(message: Message):
     if not await is_admin(message.from_user.id):
