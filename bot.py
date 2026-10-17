@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 
 import aiosqlite
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
@@ -26,7 +27,7 @@ mini_app_keyboard = ReplyKeyboardMarkup(
     is_persistent=True
 )
 
-DB_PATH = "bot.db"
+DB_PATH = os.getenv("DB_PATH", "/data/bot.db")
 
 # Pending custom inputs: {admin_id: ("xp"|"tickets", deposit_id)}
 pending_custom = {}
@@ -471,10 +472,70 @@ async def cmd_help(message: Message):
         )
 
 
+async def get_leaderboard():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT u.user_id, u.username, u.first_name,
+                   COALESCE(SUM(d.xp), 0) as total_xp,
+                   COALESCE(SUM(d.tickets), 0) as total_tickets
+            FROM users u
+            LEFT JOIN deposits d ON u.user_id = d.user_id AND d.confirmed = 1
+            GROUP BY u.user_id
+            ORDER BY total_xp DESC, total_tickets DESC
+            LIMIT 50
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "user_id": r[0],
+                    "username": r[1] or "",
+                    "first_name": r[2] or "",
+                    "xp": r[3],
+                    "tickets": r[4]
+                }
+                for r in rows
+            ]
+
+
+async def api_leaderboard(request):
+    data = await get_leaderboard()
+    return web.json_response(data)
+
+
+async def api_my_stats(request):
+    user_id = request.query.get("user_id")
+    if not user_id or not user_id.isdigit():
+        return web.json_response({"error": "user_id required"}, status=400)
+    user_id = int(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT COALESCE(SUM(xp), 0), COALESCE(SUM(tickets), 0)
+            FROM deposits
+            WHERE user_id = ? AND confirmed = 1
+        """, (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            xp, tickets = row if row else (0, 0)
+    return web.json_response({"xp": xp, "tickets": tickets})
+
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/api/leaderboard", api_leaderboard)
+    app.router.add_get("/api/mystats", api_my_stats)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
+    await site.start()
+    logger.info("API-Server läuft auf Port 8080")
+
+
 async def main():
     await init_db()
     logger.info("Bot startet...")
-    await dp.start_polling(bot)
+    await asyncio.gather(
+        dp.start_polling(bot),
+        start_web_server()
+    )
 
 
 if __name__ == "__main__":
