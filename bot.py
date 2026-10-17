@@ -347,6 +347,44 @@ async def cmd_admins(message: Message):
     await message.answer(text)
 
 
+@dp.message(Command("addxp"))
+async def cmd_addxp(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) != 3 or not args[1].isdigit() or not args[2].isdigit():
+        await message.answer("Benutzung: /addxp USER_ID XP\nBeispiel: /addxp 123456789 150")
+        return
+    user_id = int(args[1])
+    xp = int(args[2])
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO deposits (user_id, file_id, caption, created_at, xp, tickets, confirmed) VALUES (?, ?, ?, ?, ?, 0, 1)",
+            (user_id, "manual", "Manuell hinzugefügt", datetime.utcnow().isoformat(), xp)
+        )
+        await db.commit()
+    await message.answer(f"✅ {xp} XP für User {user_id} hinzugefügt.")
+
+
+@dp.message(Command("addtickets"))
+async def cmd_addtickets(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) != 3 or not args[1].isdigit() or not args[2].isdigit():
+        await message.answer("Benutzung: /addtickets USER_ID TICKETS\nBeispiel: /addtickets 123456789 25")
+        return
+    user_id = int(args[1])
+    tickets = int(args[2])
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO deposits (user_id, file_id, caption, created_at, xp, tickets, confirmed) VALUES (?, ?, ?, ?, 0, ?, 1)",
+            (user_id, "manual", "Manuell hinzugefügt", datetime.utcnow().isoformat(), tickets)
+        )
+        await db.commit()
+    await message.answer(f"✅ {tickets} Tickets für User {user_id} hinzugefügt.")
+
+
 @dp.message(Command("adduser"))
 async def cmd_adduser(message: Message):
     if not await is_admin(message.from_user.id):
@@ -463,6 +501,8 @@ async def cmd_help(message: Message):
             "/removeadmin ID – Admin entfernen\n"
             "/admins – Admin-Liste\n"
             "/adduser ID – Mitglied hinzufügen\n"
+            "/addxp ID XP – XP nachtragen\n"
+            "/addtickets ID TICKETS – Tickets nachtragen\n"
             "/help – Diese Hilfe"
         )
     else:
