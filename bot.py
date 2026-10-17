@@ -537,36 +537,54 @@ async def get_leaderboard():
             ]
 
 
-async def api_leaderboard(request):
-    data = await get_leaderboard()
-    return web.json_response(data)
-
-
 async def api_my_stats(request):
     user_id = request.query.get("user_id")
     if not user_id or not user_id.isdigit():
-        return web.json_response({"error": "user_id required"}, status=400)
-    user_id = int(user_id)
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("""
-            SELECT COALESCE(SUM(xp), 0), COALESCE(SUM(tickets), 0)
-            FROM deposits
-            WHERE user_id = ? AND confirmed = 1
-        """, (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            xp, tickets = row if row else (0, 0)
-    return web.json_response({"xp": xp, "tickets": tickets})
+        resp = web.json_response({"error": "user_id required"}, status=400)
+    else:
+        user_id = int(user_id)
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("""
+                SELECT COALESCE(SUM(xp), 0), COALESCE(SUM(tickets), 0)
+                FROM deposits
+                WHERE user_id = ? AND confirmed = 1
+            """, (user_id,)) as cursor:
+                row = await cursor.fetchone()
+                xp, tickets = row if row else (0, 0)
+        resp = web.json_response({"xp": xp, "tickets": tickets})
+
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
+async def api_leaderboard(request):
+    data = await get_leaderboard()
+    resp = web.json_response(data)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+async def handle_options(request):
+    resp = web.Response()
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
 
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/api/leaderboard", api_leaderboard)
     app.router.add_get("/api/mystats", api_my_stats)
+    app.router.add_route("OPTIONS", "/api/mystats", handle_options)
+    app.router.add_route("OPTIONS", "/api/leaderboard", handle_options)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
     await site.start()
-    logger.info("API-Server läuft auf Port 8080")
+    logger.info("API-Server läuft")
 
 
 async def main():
