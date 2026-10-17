@@ -6,7 +6,7 @@ from datetime import datetime
 import aiosqlite
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,6 +14,8 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Start-Admins aus der Umgebungsvariable (werden beim ersten Start in die DB geschrieben)
 INITIAL_ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+
+MINI_APP_URL = "https://tight-unit-516b.maxwindani-a8b.workers.dev"
 
 DB_PATH = "bot.db"
 
@@ -87,7 +89,20 @@ async def cmd_start(message: Message):
         "Willkommen!\n\n"
         "Schick mir einfach ein Foto von deiner Einzahlung (optional mit Text dazu).\n"
         "Ich speichere es für die Admins.\n\n"
-        "Du bekommst hier später auch Rundmails der Admins."
+        "Du bekommst hier später auch Rundmails der Admins.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Mini-App öffnen", web_app=WebAppInfo(url=MINI_APP_URL))]
+        ])
+    )
+
+
+@dp.message(Command("app"))
+async def cmd_app(message: Message):
+    await message.answer(
+        "Öffne die Cashout Crew Mini-App:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Mini-App öffnen", web_app=WebAppInfo(url=MINI_APP_URL))]
+        ])
     )
 
 
@@ -188,6 +203,27 @@ async def cmd_admins(message: Message):
     await message.answer(text)
 
 
+@dp.message(Command("adduser"))
+async def cmd_adduser(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Benutzung: /adduser 123456789")
+        return
+
+    user_id = int(args[1].strip())
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, first_name, registered_at) VALUES (?, ?, ?, ?)",
+            (user_id, None, None, datetime.utcnow().isoformat())
+        )
+        await db.commit()
+
+    await message.answer(f"✅ Mitglied {user_id} wurde hinzugefügt.\n\nHinweis: Der Bot kann ihm nur schreiben, wenn er den Bot schon einmal gestartet hat.")
+
+
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     if not await is_admin(message.from_user.id):
@@ -282,6 +318,7 @@ async def cmd_help(message: Message):
             "/addadmin ID – Admin hinzufügen\n"
             "/removeadmin ID – Admin entfernen\n"
             "/admins – Admin-Liste\n"
+            "/adduser ID – Mitglied hinzufügen\n"
             "/help – Diese Hilfe"
         )
     else:
