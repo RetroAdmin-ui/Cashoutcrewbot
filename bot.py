@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 
 import aiosqlite
-from aiogram import Bot, Dispatcher, F, types
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message
 from dotenv import load_dotenv
@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+# Start-Admins aus der Umgebungsvariable (werden beim ersten Start in die DB geschrieben)
+INITIAL_ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 DB_PATH = "bot.db"
 
@@ -43,11 +44,32 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                added_at TEXT
+            )
+        """)
+        # Initiale Admins aus ENV eintragen (nur wenn noch nicht vorhanden)
+        for admin_id in INITIAL_ADMIN_IDS:
+            await db.execute(
+                "INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
+                (admin_id, datetime.utcnow().isoformat())
+            )
         await db.commit()
 
 
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+async def is_admin(user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)) as cursor:
+            return await cursor.fetchone() is not None
+
+
+async def get_admin_ids() -> list[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT user_id FROM admins") as cursor:
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
 
 
 # ---------- Mitglieder ----------
@@ -76,7 +98,6 @@ async def handle_photo(message: Message):
     caption = message.caption or ""
 
     async with aiosqlite.connect(DB_PATH) as db:
-        # User sicherstellen
         await db.execute(
             "INSERT OR IGNORE INTO users (user_id, username, first_name, registered_at) VALUES (?, ?, ?, ?)",
             (user.id, user.username, user.first_name, datetime.utcnow().isoformat())
@@ -89,8 +110,9 @@ async def handle_photo(message: Message):
 
     await message.answer("✅ Einzahlung gespeichert. Danke!")
 
-    # Optional: Admins benachrichtigen
-    for admin_id in ADMIN_IDS:
+    # Admins benachrichtigen
+    admin_ids = await get_admin_ids()
+    for admin_id in admin_ids:
         try:
             await bot.send_message(
                 admin_id,
@@ -102,12 +124,75 @@ async def handle_photo(message: Message):
 
 
 # ---------- Admin-Befehle ----------
-@dp.message(Command("broadcast"))
-async def cmd_broadcast(message: Message):
-    if not is_admin(message.from_user.id):
+@dp.message(Command("addadmin"))
+async def cmd_addadmin(message: Message):
+    if not await is_admin(message.from_user.id):
         return
 
-    # Text nach dem Befehl
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Benutzung: /addadmin 123456789")
+        return
+
+    new_admin_id = int(args[1].strip())
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)",
+            (new_admin_id, datetime.utcnow().isoformat())
+        )
+        await db.commit()
+
+    await message.answer(f"✅ User {new_admin_id} wurde als Admin hinzugefügt.")
+
+
+@dp.message(Command("removeadmin"))
+async def cmd_removeadmin(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Benutzung: /removeadmin 123456789")
+        return
+
+    admin_id = int(args[1].strip())
+    # Verhindern, dass man sich selbst entfernt, wenn man der letzte Admin ist
+    current_admins = await get_admin_ids()
+    if admin_id not in current_admins:
+        await message.answer("Dieser User ist kein Admin.")
+        return
+    if len(current_admins) == 1 and admin_id == message.from_user.id:
+        await message.answer("Du kannst dich nicht entfernen – du bist der letzte Admin.")
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM admins WHERE user_id = ?", (admin_id,))
+        await db.commit()
+
+    await message.answer(f"✅ User {admin_id} wurde als Admin entfernt.")
+
+
+@dp.message(Command("admins"))
+async def cmd_admins(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    admin_ids = await get_admin_ids()
+    if not admin_ids:
+        await message.answer("Keine Admins eingetragen.")
+        return
+
+    text = "Aktuelle Admins:\n"
+    for aid in admin_ids:
+        text += f"• {aid}\n"
+    await message.answer(text)
+
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
     text = message.text.removeprefix("/broadcast").strip()
     if not text:
         await message.answer("Benutzung: /broadcast Deine Nachricht hier")
@@ -123,7 +208,7 @@ async def cmd_broadcast(message: Message):
         try:
             await bot.send_message(user_id, text)
             sent += 1
-            await asyncio.sleep(0.05)  # Rate-Limit schonen
+            await asyncio.sleep(0.05)
         except Exception:
             failed += 1
 
@@ -132,7 +217,7 @@ async def cmd_broadcast(message: Message):
 
 @dp.message(Command("deposits"))
 async def cmd_deposits(message: Message):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -168,7 +253,7 @@ async def cmd_deposits(message: Message):
 
 @dp.message(Command("users"))
 async def cmd_users(message: Message):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -188,12 +273,15 @@ async def cmd_users(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
-    if is_admin(message.from_user.id):
+    if await is_admin(message.from_user.id):
         await message.answer(
             "Admin-Befehle:\n"
             "/broadcast Text – Rundmail an alle\n"
             "/deposits – Letzte Einzahlungen anzeigen\n"
             "/users – Mitgliederliste\n"
+            "/addadmin ID – Admin hinzufügen\n"
+            "/removeadmin ID – Admin entfernen\n"
+            "/admins – Admin-Liste\n"
             "/help – Diese Hilfe"
         )
     else:
