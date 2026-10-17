@@ -6,7 +6,7 @@ from datetime import datetime
 import aiosqlite
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,6 +16,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 INITIAL_ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 MINI_APP_URL = "https://tight-unit-516b.maxwindani-a8b.workers.dev"
+
+# Feste Tastatur unten
+mini_app_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🚀 Mini-App öffnen", web_app=WebAppInfo(url=MINI_APP_URL))]
+    ],
+    resize_keyboard=True,
+    is_persistent=True
+)
 
 DB_PATH = "bot.db"
 
@@ -90,9 +99,7 @@ async def cmd_start(message: Message):
         "Schick mir einfach ein Foto von deiner Einzahlung (optional mit Text dazu).\n"
         "Ich speichere es für die Admins.\n\n"
         "Du bekommst hier später auch Rundmails der Admins.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Mini-App öffnen", web_app=WebAppInfo(url=MINI_APP_URL))]
-        ])
+        reply_markup=mini_app_keyboard
     )
 
 
@@ -100,9 +107,7 @@ async def cmd_start(message: Message):
 async def cmd_app(message: Message):
     await message.answer(
         "Öffne die Cashout Crew Mini-App:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Mini-App öffnen", web_app=WebAppInfo(url=MINI_APP_URL))]
-        ])
+        reply_markup=mini_app_keyboard
     )
 
 
