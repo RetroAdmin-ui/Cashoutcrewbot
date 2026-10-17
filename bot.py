@@ -28,7 +28,8 @@ mini_app_keyboard = ReplyKeyboardMarkup(
 
 DB_PATH = "bot.db"
 
-logging.basicConfig(level=logging.INFO)
+# Pending custom inputs: {admin_id: ("xp"|"tickets", deposit_id)}
+pending_custom = {}
 logger = logging.getLogger(__name__)
 
 bot = Bot(token=BOT_TOKEN)
@@ -149,6 +150,10 @@ async def handle_photo(message: Message):
             InlineKeyboardButton(text="+25 Tickets", callback_data=f"tickets:{deposit_id}:25"),
         ],
         [
+            InlineKeyboardButton(text="✏️ XP manuell", callback_data=f"customxp:{deposit_id}"),
+            InlineKeyboardButton(text="✏️ Tickets manuell", callback_data=f"customtickets:{deposit_id}"),
+        ],
+        [
             InlineKeyboardButton(text="✅ Bestätigen", callback_data=f"confirm:{deposit_id}"),
         ]
     ])
@@ -166,6 +171,53 @@ async def handle_photo(message: Message):
 
 
 # ---------- Callbacks für XP / Tickets ----------
+@dp.callback_query(F.data.startswith("customxp:"))
+async def cb_custom_xp(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Nur Admins", show_alert=True)
+        return
+    dep_id = int(callback.data.split(":")[1])
+    pending_custom[callback.from_user.id] = ("xp", dep_id)
+    await callback.answer()
+    await callback.message.answer("Bitte gib die gewünschte XP-Anzahl ein (nur Zahl):")
+
+
+@dp.callback_query(F.data.startswith("customtickets:"))
+async def cb_custom_tickets(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Nur Admins", show_alert=True)
+        return
+    dep_id = int(callback.data.split(":")[1])
+    pending_custom[callback.from_user.id] = ("tickets", dep_id)
+    await callback.answer()
+    await callback.message.answer("Bitte gib die gewünschte Ticket-Anzahl ein (nur Zahl):")
+
+
+@dp.message(F.text.regexp(r"^\d+$"))
+async def handle_custom_input(message: Message):
+    if message.from_user.id not in pending_custom:
+        return
+    if not await is_admin(message.from_user.id):
+        return
+
+    typ, dep_id = pending_custom.pop(message.from_user.id)
+    amount = int(message.text)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        if typ == "xp":
+            await db.execute("UPDATE deposits SET xp = xp + ? WHERE id = ?", (amount, dep_id))
+            await db.commit()
+            async with db.execute("SELECT xp FROM deposits WHERE id = ?", (dep_id,)) as c:
+                total = (await c.fetchone())[0]
+            await message.answer(f"✅ +{amount} XP hinzugefügt (gesamt: {total})")
+        else:
+            await db.execute("UPDATE deposits SET tickets = tickets + ? WHERE id = ?", (amount, dep_id))
+            await db.commit()
+            async with db.execute("SELECT tickets FROM deposits WHERE id = ?", (dep_id,)) as c:
+                total = (await c.fetchone())[0]
+            await message.answer(f"✅ +{amount} Tickets hinzugefügt (gesamt: {total})")
+
+
 @dp.callback_query(F.data.startswith("xp:"))
 async def cb_xp(callback: CallbackQuery):
     if not await is_admin(callback.from_user.id):
