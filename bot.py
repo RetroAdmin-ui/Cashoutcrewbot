@@ -103,6 +103,7 @@ async def cmd_start(message: Message):
         "Willkommen!\n\n"
         "Schick mir einfach ein Foto von deiner Einzahlung (optional mit Text dazu).\n"
         "Ich speichere es für die Admins.\n\n"
+        "Mit /mystats siehst du deine XP und Tickets.\n"
         "Du bekommst hier später auch Rundmails der Admins.",
         reply_markup=mini_app_keyboard
     )
@@ -347,6 +348,65 @@ async def cmd_admins(message: Message):
     await message.answer(text)
 
 
+@dp.message(Command("mystats"))
+async def cmd_mystats(message: Message):
+    user_id = message.from_user.id
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT COALESCE(SUM(xp), 0), COALESCE(SUM(tickets), 0)
+            FROM deposits
+            WHERE user_id = ? AND confirmed = 1
+        """, (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            xp, tickets = row if row else (0, 0)
+    await message.answer(
+        f"Deine Werte:\n\n"
+        f"⭐ XP: {xp}\n"
+        f"🎫 Tickets: {tickets}"
+    )
+
+
+@dp.message(Command("setxp"))
+async def cmd_setxp(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) != 3 or not args[1].isdigit() or not args[2].lstrip("-").isdigit():
+        await message.answer("Benutzung: /setxp USER_ID XP\nBeispiel: /setxp 123456789 500")
+        return
+    user_id = int(args[1])
+    xp = int(args[2])
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Alten manuellen Eintrag löschen und neuen setzen (einfache Variante)
+        await db.execute("DELETE FROM deposits WHERE user_id = ? AND file_id = 'manual'", (user_id,))
+        await db.execute(
+            "INSERT INTO deposits (user_id, file_id, caption, created_at, xp, tickets, confirmed) VALUES (?, ?, ?, ?, ?, 0, 1)",
+            (user_id, "manual", "Manuell gesetzt", datetime.utcnow().isoformat(), xp)
+        )
+        await db.commit()
+    await message.answer(f"✅ XP für User {user_id} auf {xp} gesetzt.")
+
+
+@dp.message(Command("settickets"))
+async def cmd_settickets(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) != 3 or not args[1].isdigit() or not args[2].lstrip("-").isdigit():
+        await message.answer("Benutzung: /settickets USER_ID TICKETS\nBeispiel: /settickets 123456789 40")
+        return
+    user_id = int(args[1])
+    tickets = int(args[2])
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM deposits WHERE user_id = ? AND file_id = 'manual'", (user_id,))
+        await db.execute(
+            "INSERT INTO deposits (user_id, file_id, caption, created_at, xp, tickets, confirmed) VALUES (?, ?, ?, ?, 0, ?, 1)",
+            (user_id, "manual", "Manuell gesetzt", datetime.utcnow().isoformat(), tickets)
+        )
+        await db.commit()
+    await message.answer(f"✅ Tickets für User {user_id} auf {tickets} gesetzt.")
+
+
 @dp.message(Command("addxp"))
 async def cmd_addxp(message: Message):
     if not await is_admin(message.from_user.id):
@@ -501,14 +561,16 @@ async def cmd_help(message: Message):
             "/removeadmin ID – Admin entfernen\n"
             "/admins – Admin-Liste\n"
             "/adduser ID – Mitglied hinzufügen\n"
-            "/addxp ID XP – XP nachtragen\n"
-            "/addtickets ID TICKETS – Tickets nachtragen\n"
+            "/addxp ID XP – XP hinzufügen\n"
+            "/addtickets ID TICKETS – Tickets hinzufügen\n"
+            "/setxp ID XP – XP fest setzen\n"
+            "/settickets ID TICKETS – Tickets fest setzen\n"
             "/help – Diese Hilfe"
         )
     else:
         await message.answer(
             "Schick mir einfach ein Foto deiner Einzahlung.\n"
-            "Mehr braucht du nicht zu tun."
+            "Mit /mystats siehst du deine XP und Tickets."
         )
 
 
