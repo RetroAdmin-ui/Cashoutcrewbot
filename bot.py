@@ -16,7 +16,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Start-Admins aus der Umgebungsvariable (werden beim ersten Start in die DB geschrieben)
 INITIAL_ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
-MINI_APP_URL = "https://fragrant-cell-58a8.maxwindani-a8b.workers.dev"
+MINI_APP_URL = "https://lingering-base-8871.maxwindani-a8b.workers.dev"
 
 # Feste Tastatur unten
 mini_app_keyboard = ReplyKeyboardMarkup(
