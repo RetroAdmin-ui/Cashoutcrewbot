@@ -147,13 +147,7 @@ async def handle_photo(message: Message):
             InlineKeyboardButton(text="+50 XP", callback_data=f"xp:{deposit_id}:50"),
         ],
         [
-            InlineKeyboardButton(text="+5 Tickets", callback_data=f"tickets:{deposit_id}:5"),
-            InlineKeyboardButton(text="+10 Tickets", callback_data=f"tickets:{deposit_id}:10"),
-            InlineKeyboardButton(text="+25 Tickets", callback_data=f"tickets:{deposit_id}:25"),
-        ],
-        [
             InlineKeyboardButton(text="✏️ XP manuell", callback_data=f"customxp:{deposit_id}"),
-            InlineKeyboardButton(text="✏️ Tickets manuell", callback_data=f"customtickets:{deposit_id}"),
         ],
         [
             InlineKeyboardButton(text="✅ Bestätigen", callback_data=f"confirm:{deposit_id}"),
@@ -184,17 +178,6 @@ async def cb_custom_xp(callback: CallbackQuery):
     await callback.message.answer("Bitte gib die gewünschte XP-Anzahl ein (nur Zahl):")
 
 
-@dp.callback_query(F.data.startswith("customtickets:"))
-async def cb_custom_tickets(callback: CallbackQuery):
-    if not await is_admin(callback.from_user.id):
-        await callback.answer("Nur Admins", show_alert=True)
-        return
-    dep_id = int(callback.data.split(":")[1])
-    pending_custom[callback.from_user.id] = ("tickets", dep_id)
-    await callback.answer()
-    await callback.message.answer("Bitte gib die gewünschte Ticket-Anzahl ein (nur Zahl):")
-
-
 @dp.message(F.text.regexp(r"^\d+$"))
 async def handle_custom_input(message: Message):
     if message.from_user.id not in pending_custom:
@@ -206,18 +189,11 @@ async def handle_custom_input(message: Message):
     amount = int(message.text)
 
     async with aiosqlite.connect(DB_PATH) as db:
-        if typ == "xp":
-            await db.execute("UPDATE deposits SET xp = xp + ? WHERE id = ?", (amount, dep_id))
-            await db.commit()
-            async with db.execute("SELECT xp FROM deposits WHERE id = ?", (dep_id,)) as c:
-                total = (await c.fetchone())[0]
-            await message.answer(f"✅ +{amount} XP hinzugefügt (gesamt: {total})")
-        else:
-            await db.execute("UPDATE deposits SET tickets = tickets + ? WHERE id = ?", (amount, dep_id))
-            await db.commit()
-            async with db.execute("SELECT tickets FROM deposits WHERE id = ?", (dep_id,)) as c:
-                total = (await c.fetchone())[0]
-            await message.answer(f"✅ +{amount} Tickets hinzugefügt (gesamt: {total})")
+        await db.execute("UPDATE deposits SET xp = xp + ? WHERE id = ?", (amount, dep_id))
+        await db.commit()
+        async with db.execute("SELECT xp FROM deposits WHERE id = ?", (dep_id,)) as c:
+            total = (await c.fetchone())[0]
+        await message.answer(f"✅ +{amount} XP hinzugefügt (gesamt: {total})")
 
 
 @dp.callback_query(F.data.startswith("xp:"))
@@ -348,7 +324,22 @@ async def cmd_admins(message: Message):
     await message.answer(text)
 
 
-@dp.message(Command("myid"))
+@dp.message(Command("tickets"))
+async def cmd_tickets(message: Message):
+    user = message.from_user
+    admin_ids = await get_admin_ids()
+    text = (
+        f"🎫 Ticket-Anfrage\n\n"
+        f"Von: @{user.username or user.first_name}\n"
+        f"ID: {user.id}\n\n"
+        f"Bitte antworte dem Mitglied mit der Ticket-Anzahl."
+    )
+    for admin_id in admin_ids:
+        try:
+            await bot.send_message(admin_id, text)
+        except Exception:
+            pass
+    await message.answer("✅ Deine Anfrage wurde an die Admins gesendet. Du bekommst bald eine Antwort.")
 async def cmd_myid(message: Message):
     user_id = message.from_user.id
     await message.answer(f"Deine Telegram-ID ist:\n{user_id}")
@@ -359,16 +350,17 @@ async def cmd_mystats(message: Message):
     user_id = message.from_user.id
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            SELECT COALESCE(SUM(xp), 0), COALESCE(SUM(tickets), 0)
+            SELECT COALESCE(SUM(xp), 0)
             FROM deposits
             WHERE user_id = ? AND confirmed = 1
         """, (user_id,)) as cursor:
             row = await cursor.fetchone()
-            xp, tickets = row if row else (0, 0)
+            xp = row[0] if row else 0
+    level = (xp // 100) + 1
     await message.answer(
         f"Deine Werte:\n\n"
         f"⭐ XP: {xp}\n"
-        f"🎫 Tickets: {tickets}"
+        f"🏆 Level: {level}"
     )
 
 
@@ -430,25 +422,6 @@ async def cmd_addxp(message: Message):
         )
         await db.commit()
     await message.answer(f"✅ {xp} XP für User {user_id} hinzugefügt.")
-
-
-@dp.message(Command("addtickets"))
-async def cmd_addtickets(message: Message):
-    if not await is_admin(message.from_user.id):
-        return
-    args = message.text.split()
-    if len(args) != 3 or not args[1].isdigit() or not args[2].isdigit():
-        await message.answer("Benutzung: /addtickets USER_ID TICKETS\nBeispiel: /addtickets 123456789 25")
-        return
-    user_id = int(args[1])
-    tickets = int(args[2])
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO deposits (user_id, file_id, caption, created_at, xp, tickets, confirmed) VALUES (?, ?, ?, ?, 0, ?, 1)",
-            (user_id, "manual", "Manuell hinzugefügt", datetime.utcnow().isoformat(), tickets)
-        )
-        await db.commit()
-    await message.answer(f"✅ {tickets} Tickets für User {user_id} hinzugefügt.")
 
 
 @dp.message(Command("adduser"))
@@ -577,7 +550,8 @@ async def cmd_help(message: Message):
     else:
         await message.answer(
             "Schick mir einfach ein Foto deiner Einzahlung.\n"
-            "Mit /mystats siehst du deine XP und Tickets."
+            "Mit /mystats siehst du deine XP und dein Level.\n"
+            "Mit /tickets kannst du deine Ticket-Anzahl anfragen."
         )
 
 
