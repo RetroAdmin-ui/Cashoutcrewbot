@@ -444,7 +444,43 @@ async def cmd_addxp(message: Message):
     await message.answer(f"✅ {xp} XP für User {user_id} hinzugefügt.")
 
 
-@dp.message(Command("adduser"))
+@dp.message(Command("addtickets"))
+async def cmd_addtickets(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) != 3 or not args[1].isdigit() or not args[2].isdigit():
+        await message.answer("Benutzung: /addtickets USER_ID TICKETS\nBeispiel: /addtickets 123456789 25")
+        return
+    user_id = int(args[1])
+    tickets = int(args[2])
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO deposits (user_id, file_id, caption, created_at, xp, tickets, confirmed) VALUES (?, ?, ?, ?, 0, ?, 1)",
+            (user_id, "manual", "Manuell hinzugefügt", datetime.utcnow().isoformat(), tickets)
+        )
+        await db.commit()
+    await message.answer(f"✅ {tickets} Tickets für User {user_id} hinzugefügt.")
+
+
+@dp.message(Command("settickets"))
+async def cmd_settickets(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) != 3 or not args[1].isdigit() or not args[2].lstrip("-").isdigit():
+        await message.answer("Benutzung: /settickets USER_ID TICKETS\nBeispiel: /settickets 123456789 40")
+        return
+    user_id = int(args[1])
+    tickets = int(args[2])
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM deposits WHERE user_id = ? AND file_id = 'manual'", (user_id,))
+        await db.execute(
+            "INSERT INTO deposits (user_id, file_id, caption, created_at, xp, tickets, confirmed) VALUES (?, ?, ?, ?, 0, ?, 1)",
+            (user_id, "manual", "Manuell gesetzt", datetime.utcnow().isoformat(), tickets)
+        )
+        await db.commit()
+    await message.answer(f"✅ Tickets für User {user_id} auf {tickets} gesetzt.")
 async def cmd_adduser(message: Message):
     if not await is_admin(message.from_user.id):
         return
@@ -671,6 +707,45 @@ async def api_my_history(request):
     return resp
 
 
+async def api_admin_overview(request):
+    # Simple check via query param (not super secure, but for internal use)
+    admin_id = request.query.get("admin_id")
+    if not admin_id or not admin_id.isdigit():
+        resp = web.json_response({"error": "unauthorized"}, status=403)
+    else:
+        admin_id = int(admin_id)
+        if not await is_admin(admin_id):
+            resp = web.json_response({"error": "unauthorized"}, status=403)
+        else:
+            async with aiosqlite.connect(DB_PATH) as db:
+                async with db.execute("""
+                    SELECT u.user_id, u.username, u.first_name,
+                           COALESCE(SUM(d.xp), 0) as xp,
+                           COALESCE(SUM(d.tickets), 0) as tickets
+                    FROM users u
+                    LEFT JOIN deposits d ON u.user_id = d.user_id AND d.confirmed = 1
+                    GROUP BY u.user_id
+                    ORDER BY xp DESC
+                """) as cursor:
+                    rows = await cursor.fetchall()
+                    overview = [
+                        {
+                            "user_id": r[0],
+                            "username": r[1] or "",
+                            "first_name": r[2] or "",
+                            "xp": r[3],
+                            "tickets": r[4]
+                        }
+                        for r in rows
+                    ]
+            resp = web.json_response(overview)
+
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/api/leaderboard", api_leaderboard)
@@ -678,7 +753,8 @@ async def start_web_server():
     app.router.add_get("/api/myhistory", api_my_history)
     app.router.add_route("OPTIONS", "/api/mystats", handle_options)
     app.router.add_route("OPTIONS", "/api/leaderboard", handle_options)
-    app.router.add_route("OPTIONS", "/api/myhistory", handle_options)
+    app.router.add_get("/api/adminoverview", api_admin_overview)
+    app.router.add_route("OPTIONS", "/api/adminoverview", handle_options)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
