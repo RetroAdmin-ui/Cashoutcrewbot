@@ -18,10 +18,10 @@ INITIAL_ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",
 
 MINI_APP_URL = "https://lingering-base-8871.maxwindani-a8b.workers.dev"
 
-# Feste Tastatur unten
+# Feste Tastatur unten – Button sendet Text, Bot antwortet mit persönlichem Link
 mini_app_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🚀 Mini-App öffnen", web_app=WebAppInfo(url=MINI_APP_URL))]
+        [KeyboardButton(text="🚀 Mini-App öffnen")]
     ],
     resize_keyboard=True,
     is_persistent=True
