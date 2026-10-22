@@ -351,6 +351,9 @@ async def cmd_admins(message: Message):
 @dp.message(Command("myid"))
 async def cmd_myid(message: Message):
     await message.answer(f"Deine Telegram-ID ist:\n`{message.from_user.id}`", parse_mode="Markdown")
+
+
+@dp.message(Command("mystats"))
 async def cmd_mystats(message: Message):
     user_id = message.from_user.id
     async with aiosqlite.connect(DB_PATH) as db:
@@ -567,6 +570,7 @@ async def cmd_help(message: Message):
             "/addtickets ID TICKETS – Tickets hinzufügen\n"
             "/setxp ID XP – XP fest setzen\n"
             "/settickets ID TICKETS – Tickets fest setzen\n"
+            "/myid – Zeigt deine Telegram-ID\n"
             "/help – Diese Hilfe"
         )
     else:
