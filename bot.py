@@ -350,7 +350,8 @@ async def cmd_admins(message: Message):
 
 @dp.message(Command("myid"))
 async def cmd_myid(message: Message):
-    await message.answer(f"Deine Telegram-ID ist:\n`{message.from_user.id}`", parse_mode="Markdown")
+    user_id = message.from_user.id
+    await message.answer(f"Deine Telegram-ID ist:\n{user_id}")
 
 
 @dp.message(Command("mystats"))
