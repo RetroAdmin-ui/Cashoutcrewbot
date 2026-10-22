@@ -348,7 +348,9 @@ async def cmd_admins(message: Message):
     await message.answer(text)
 
 
-@dp.message(Command("mystats"))
+@dp.message(Command("myid"))
+async def cmd_myid(message: Message):
+    await message.answer(f"Deine Telegram-ID ist:\n`{message.from_user.id}`", parse_mode="Markdown")
 async def cmd_mystats(message: Message):
     user_id = message.from_user.id
     async with aiosqlite.connect(DB_PATH) as db:
@@ -636,12 +638,48 @@ async def handle_options(request):
     return resp
 
 
+async def api_my_history(request):
+    user_id = request.query.get("user_id")
+    if not user_id or not user_id.isdigit():
+        resp = web.json_response({"error": "user_id required"}, status=400)
+    else:
+        user_id = int(user_id)
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("""
+                SELECT id, caption, xp, tickets, created_at, confirmed
+                FROM deposits
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 30
+            """, (user_id,)) as cursor:
+                rows = await cursor.fetchall()
+                history = [
+                    {
+                        "id": r[0],
+                        "caption": r[1] or "",
+                        "xp": r[2],
+                        "tickets": r[3],
+                        "created_at": r[4],
+                        "confirmed": bool(r[5])
+                    }
+                    for r in rows
+                ]
+        resp = web.json_response(history)
+
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/api/leaderboard", api_leaderboard)
     app.router.add_get("/api/mystats", api_my_stats)
+    app.router.add_get("/api/myhistory", api_my_history)
     app.router.add_route("OPTIONS", "/api/mystats", handle_options)
     app.router.add_route("OPTIONS", "/api/leaderboard", handle_options)
+    app.router.add_route("OPTIONS", "/api/myhistory", handle_options)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
