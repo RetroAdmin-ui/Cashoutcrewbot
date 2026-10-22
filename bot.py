@@ -109,7 +109,14 @@ async def cmd_start(message: Message):
     )
 
 
-@dp.message(Command("app"))
+@dp.message(Command("openapp"))
+async def cmd_openapp(message: Message):
+    user_id = message.from_user.id
+    personal_url = f"{MINI_APP_URL}?uid={user_id}"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Mini-App öffnen", web_app=WebAppInfo(url=personal_url))]
+    ])
+    await message.answer("Hier ist dein persönlicher Zugang zur Mini-App:", reply_markup=keyboard)
 async def cmd_app(message: Message):
     await message.answer(
         "Öffne die Cashout Crew Mini-App:",
