@@ -746,6 +746,101 @@ async def api_admin_overview(request):
     return resp
 
 
+async def api_set_stats(request):
+    try:
+        data = await request.json()
+    except Exception:
+        resp = web.json_response({"error": "invalid json"}, status=400)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    admin_id = data.get("admin_id")
+    user_id = data.get("user_id")
+    xp = data.get("xp")
+    tickets = data.get("tickets")
+    name = data.get("name", "")
+
+    if not admin_id or not await is_admin(int(admin_id)):
+        resp = web.json_response({"error": "unauthorized"}, status=403)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    if not user_id:
+        resp = web.json_response({"error": "user_id required"}, status=400)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    user_id = int(user_id)
+    xp = int(xp) if xp is not None else 0
+    tickets = int(tickets) if tickets is not None else 0
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Update or create a confirmed deposit to set the totals
+        await db.execute("""
+            DELETE FROM deposits WHERE user_id = ? AND confirmed = 1
+        """, (user_id,))
+        if xp > 0 or tickets > 0:
+            await db.execute("""
+                INSERT INTO deposits (user_id, caption, xp, tickets, confirmed, created_at)
+                VALUES (?, ?, ?, ?, 1, datetime('now'))
+            """, (user_id, "Admin-Korrektur", xp, tickets))
+        # Update name if provided
+        if name:
+            await db.execute("""
+                UPDATE users SET first_name = ? WHERE user_id = ?
+            """, (name, user_id))
+        await db.commit()
+
+    resp = web.json_response({"ok": True})
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
+async def api_user_history(request):
+    admin_id = request.query.get("admin_id")
+    user_id = request.query.get("user_id")
+
+    if not admin_id or not admin_id.isdigit() or not await is_admin(int(admin_id)):
+        resp = web.json_response({"error": "unauthorized"}, status=403)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    if not user_id or not user_id.isdigit():
+        resp = web.json_response({"error": "user_id required"}, status=400)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    user_id = int(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT id, caption, xp, tickets, created_at, confirmed
+            FROM deposits
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 50
+        """, (user_id,)) as cursor:
+            rows = await cursor.fetchall()
+            history = [
+                {
+                    "id": r[0],
+                    "caption": r[1] or "",
+                    "xp": r[2],
+                    "tickets": r[3],
+                    "created_at": r[4],
+                    "confirmed": bool(r[5])
+                }
+                for r in rows
+            ]
+
+    resp = web.json_response(history)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/api/leaderboard", api_leaderboard)
@@ -755,6 +850,10 @@ async def start_web_server():
     app.router.add_route("OPTIONS", "/api/leaderboard", handle_options)
     app.router.add_get("/api/adminoverview", api_admin_overview)
     app.router.add_route("OPTIONS", "/api/adminoverview", handle_options)
+    app.router.add_post("/api/setstats", api_set_stats)
+    app.router.add_route("OPTIONS", "/api/setstats", handle_options)
+    app.router.add_get("/api/userhistory", api_user_history)
+    app.router.add_route("OPTIONS", "/api/userhistory", handle_options)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
