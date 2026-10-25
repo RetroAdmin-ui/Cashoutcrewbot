@@ -66,6 +66,17 @@ async def init_db():
                 added_at TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS tips (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                match_id INTEGER,
+                tip1 INTEGER,
+                tip2 INTEGER,
+                created_at TEXT,
+                UNIQUE(user_id, match_id)
+            )
+        """)
         # Initiale Admins aus ENV eintragen (nur wenn noch nicht vorhanden)
         for admin_id in INITIAL_ADMIN_IDS:
             await db.execute(
@@ -841,6 +852,88 @@ async def api_user_history(request):
     return resp
 
 
+async def api_save_tip(request):
+    try:
+        data = await request.json()
+    except Exception:
+        resp = web.json_response({"error": "invalid json"}, status=400)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    user_id = data.get("user_id")
+    match_id = data.get("match_id")
+    tip1 = data.get("tip1")
+    tip2 = data.get("tip2")
+
+    if not user_id or not match_id:
+        resp = web.json_response({"error": "missing data"}, status=400)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO tips (user_id, match_id, tip1, tip2, created_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+        """, (int(user_id), int(match_id), int(tip1), int(tip2)))
+        await db.commit()
+
+    resp = web.json_response({"ok": True})
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
+async def api_my_tips(request):
+    user_id = request.query.get("user_id")
+    if not user_id or not user_id.isdigit():
+        resp = web.json_response({})
+    else:
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT match_id, tip1, tip2 FROM tips WHERE user_id = ?", (int(user_id),)) as cursor:
+                rows = await cursor.fetchall()
+                tips = {str(r[0]): {"t1": r[1], "t2": r[2]} for r in rows}
+        resp = web.json_response(tips)
+
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+async def api_admin_tips(request):
+    admin_id = request.query.get("admin_id")
+    if not admin_id or not admin_id.isdigit() or not await is_admin(int(admin_id)):
+        resp = web.json_response({"error": "unauthorized"}, status=403)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT t.user_id, u.username, u.first_name, t.match_id, t.tip1, t.tip2, t.created_at
+            FROM tips t
+            LEFT JOIN users u ON t.user_id = u.user_id
+            ORDER BY t.match_id, t.created_at
+        """) as cursor:
+            rows = await cursor.fetchall()
+            tips = [
+                {
+                    "user_id": r[0],
+                    "username": r[1] or "",
+                    "first_name": r[2] or "",
+                    "match_id": r[3],
+                    "tip1": r[4],
+                    "tip2": r[5],
+                    "created_at": r[6]
+                }
+                for r in rows
+            ]
+
+    resp = web.json_response(tips)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/api/leaderboard", api_leaderboard)
@@ -854,6 +947,12 @@ async def start_web_server():
     app.router.add_route("OPTIONS", "/api/setstats", handle_options)
     app.router.add_get("/api/userhistory", api_user_history)
     app.router.add_route("OPTIONS", "/api/userhistory", handle_options)
+    app.router.add_post("/api/savetip", api_save_tip)
+    app.router.add_route("OPTIONS", "/api/savetip", handle_options)
+    app.router.add_get("/api/mytips", api_my_tips)
+    app.router.add_route("OPTIONS", "/api/mytips", handle_options)
+    app.router.add_get("/api/admintips", api_admin_tips)
+    app.router.add_route("OPTIONS", "/api/admintips", handle_options)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
