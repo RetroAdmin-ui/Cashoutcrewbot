@@ -14,7 +14,10 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Start-Admins aus der Umgebungsvariable (werden beim ersten Start in die DB geschrieben)
-INITIAL_ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+INITIAL_ADMIN_IDS = [6448282988]
+# Zusätzlich aus ENV laden
+env_admins = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+INITIAL_ADMIN_IDS.extend(env_admins)
 
 MINI_APP_URL = "https://lingering-base-8871.maxwindani-a8b.workers.dev"
 
@@ -109,7 +112,40 @@ async def init_db():
         await db.commit()
 
 
-async def is_admin(user_id: int) -> bool:
+LEVEL_THRESHOLDS = [0, 500, 1000, 2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000]
+LEVEL_REWARDS = {
+    2: "Glücksrad mit 5× 25€ Guthaben",
+    3: "50€",
+    4: "Teilnahme am Bonusbuy-Turnier",
+    5: "200€",
+    6: "8 Reloads à 50€",
+    7: "Schlag den Bench – 500€",
+    8: "1× im Monat Reload 100€ (6 Monate)",
+    9: "1× im Monat Reload 200€ (6 Monate)",
+    10: "1vs1 gegen den Bench um 1000€ + 1 Jahr Reload 200€/Monat"
+}
+
+def get_level(xp: int) -> int:
+    level = 0
+    for i, threshold in enumerate(LEVEL_THRESHOLDS):
+        if xp >= threshold:
+            level = i
+        else:
+            break
+    return level
+
+async def check_level_up(user_id: int, old_xp: int, new_xp: int):
+    old_level = get_level(old_xp)
+    new_level = get_level(new_xp)
+    if new_level > old_level:
+        reward = LEVEL_REWARDS.get(new_level, "")
+        text = f"🎉 Glückwunsch! Du hast Level {new_level} erreicht!"
+        if reward:
+            text += f"\n\nBelohnung: {reward}"
+        try:
+            await bot.send_message(user_id, text)
+        except Exception:
+            pass
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)) as cursor:
             return await cursor.fetchone() is not None
@@ -339,6 +375,29 @@ async def cb_confirm(callback: CallbackQuery):
 
 
 @dp.message(Command("addadmin"))
+async def cmd_add_admin(message: Message):
+    if not await is_admin(message.from_user.id):
+        # Allow first admin to add themselves if no admins exist
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT COUNT(*) FROM admins") as c:
+                count = (await c.fetchone())[0]
+        if count > 0:
+            return
+
+    parts = message.text.split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Benutzung: /addadmin USER_ID")
+        return
+
+    admin_id = int(parts[1])
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, datetime('now'))",
+            (admin_id,)
+        )
+        await db.commit()
+
+    await message.answer(f"✅ {admin_id} wurde als Admin hinzugefügt.")
 async def cmd_addadmin(message: Message):
     if not await is_admin(message.from_user.id):
         return
