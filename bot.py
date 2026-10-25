@@ -382,7 +382,16 @@ async def cb_confirm(callback: CallbackQuery):
         caption=callback.message.caption + "\n\n✅ Bestätigt",
         reply_markup=None
     )
-    # Hier später XP/Tickets dem User gutschreiben und Mini-App aktualisieren
+    # Benachrichtigung an den User
+    if row:
+        user_id, xp, tickets = row
+        text = f"✅ Deine Einzahlung wurde bestätigt!\n\nXP: +{xp or 0}"
+        if tickets:
+            text += f"\nTickets: +{tickets}"
+        try:
+            await bot.send_message(user_id, text)
+        except Exception:
+            pass
 
 
 @dp.message(Command("addadmin"))
