@@ -109,7 +109,7 @@ async def init_db():
         await db.commit()
 
 
-LEVEL_THRESHOLDS = [0, 500, 2000, 5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
+LEVEL_THRESHOLDS = [0, 500, 1000, 2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000]
 LEVEL_REWARDS = {
     2: "Glücksrad mit 5× 25€ Guthaben",
     3: "50€",
