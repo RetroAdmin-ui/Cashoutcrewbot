@@ -93,6 +93,13 @@ async def init_db():
                 FOREIGN KEY (broadcast_id) REFERENCES broadcasts (id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS preassigned_xp (
+                user_id INTEGER PRIMARY KEY,
+                xp INTEGER,
+                added_at TEXT
+            )
+        """)
         # Initiale Admins aus ENV eintragen (nur wenn noch nicht vorhanden)
         for admin_id in INITIAL_ADMIN_IDS:
             await db.execute(
@@ -124,6 +131,18 @@ async def cmd_start(message: Message):
             "INSERT OR IGNORE INTO users (user_id, username, first_name, registered_at) VALUES (?, ?, ?, ?)",
             (user.id, user.username, user.first_name, datetime.utcnow().isoformat())
         )
+        # Check if preassigned XP exists and user has no XP yet
+        async with db.execute("SELECT xp FROM preassigned_xp WHERE user_id = ?", (user.id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                pre_xp = row[0]
+                async with db.execute("SELECT COALESCE(SUM(xp), 0) FROM deposits WHERE user_id = ? AND confirmed = 1", (user.id,)) as c2:
+                    current_xp = (await c2.fetchone())[0]
+                if current_xp == 0:
+                    await db.execute("""
+                        INSERT INTO deposits (user_id, caption, xp, tickets, confirmed, created_at)
+                        VALUES (?, ?, ?, 0, 1, datetime('now'))
+                    """, (user.id, "Vorab-XP", pre_xp))
         await db.commit()
 
     await message.answer(
@@ -175,6 +194,18 @@ async def handle_photo(message: Message):
             "INSERT OR IGNORE INTO users (user_id, username, first_name, registered_at) VALUES (?, ?, ?, ?)",
             (user.id, user.username, user.first_name, datetime.utcnow().isoformat())
         )
+        # Check if preassigned XP exists and user has no XP yet
+        async with db.execute("SELECT xp FROM preassigned_xp WHERE user_id = ?", (user.id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                pre_xp = row[0]
+                async with db.execute("SELECT COALESCE(SUM(xp), 0) FROM deposits WHERE user_id = ? AND confirmed = 1", (user.id,)) as c2:
+                    current_xp = (await c2.fetchone())[0]
+                if current_xp == 0:
+                    await db.execute("""
+                        INSERT INTO deposits (user_id, caption, xp, tickets, confirmed, created_at)
+                        VALUES (?, ?, ?, 0, 1, datetime('now'))
+                    """, (user.id, "Vorab-XP", pre_xp))
         await db.execute(
             "INSERT INTO deposits (user_id, file_id, caption, created_at) VALUES (?, ?, ?, ?)",
             (user.id, photo.file_id, caption, datetime.utcnow().isoformat())
@@ -528,7 +559,33 @@ async def cmd_adduser(message: Message):
     await message.answer(f"✅ Mitglied {user_id} wurde hinzugefügt.\n\nHinweis: Der Bot kann ihm nur schreiben, wenn er den Bot schon einmal gestartet hat.")
 
 
-@dp.message(Command("broadcast"))
+@dp.message(Command("setprexp"))
+async def cmd_set_pre_xp(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    text = message.text.removeprefix("/setprexp").strip()
+    if not text:
+        await message.answer("Benutzung:\n/setprexp\n123456789 500\n987654321 1200\n...")
+        return
+
+    lines = text.splitlines()
+    added = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        for line in lines:
+            parts = line.strip().split()
+            if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+                continue
+            user_id = int(parts[0])
+            xp = int(parts[1])
+            await db.execute(
+                "INSERT OR REPLACE INTO preassigned_xp (user_id, xp, added_at) VALUES (?, ?, datetime('now'))",
+                (user_id, xp)
+            )
+            added += 1
+        await db.commit()
+
+    await message.answer(f"✅ {added} Vorab-XP Einträge gespeichert.\nDiese werden nur vergeben, wenn der User noch keine XP hat.")
 async def cmd_broadcast(message: Message):
     if not await is_admin(message.from_user.id):
         return
