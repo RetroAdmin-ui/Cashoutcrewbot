@@ -559,7 +559,28 @@ async def cmd_adduser(message: Message):
     await message.answer(f"✅ Mitglied {user_id} wurde hinzugefügt.\n\nHinweis: Der Bot kann ihm nur schreiben, wenn er den Bot schon einmal gestartet hat.")
 
 
-@dp.message(Command("setprexp"))
+@dp.message(Command("applyprexp"))
+async def cmd_apply_pre_xp(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    applied = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT user_id, xp FROM preassigned_xp") as cursor:
+            rows = await cursor.fetchall()
+
+        for user_id, pre_xp in rows:
+            async with db.execute("SELECT COALESCE(SUM(xp), 0) FROM deposits WHERE user_id = ? AND confirmed = 1", (user_id,)) as c:
+                current = (await c.fetchone())[0]
+            if current == 0:
+                await db.execute("""
+                    INSERT INTO deposits (user_id, caption, xp, tickets, confirmed, created_at)
+                    VALUES (?, ?, ?, 0, 1, datetime('now'))
+                """, (user_id, "Vorab-XP", pre_xp))
+                applied += 1
+        await db.commit()
+
+    await message.answer(f"✅ Vorab-XP angewendet bei {applied} Mitgliedern (nur bei denen mit 0 XP).")
 async def cmd_set_pre_xp(message: Message):
     if not await is_admin(message.from_user.id):
         return
