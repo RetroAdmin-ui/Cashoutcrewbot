@@ -103,6 +103,14 @@ async def init_db():
                 added_at TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS match_results (
+                match_id INTEGER PRIMARY KEY,
+                score1 INTEGER,
+                score2 INTEGER,
+                updated_at TEXT
+            )
+        """)
         # Initiale Admins aus ENV eintragen (nur wenn noch nicht vorhanden)
         for admin_id in INITIAL_ADMIN_IDS:
             await db.execute(
@@ -1218,6 +1226,49 @@ async def api_add_xp(request):
     return resp
 
 
+async def api_set_result(request):
+    try:
+        data = await request.json()
+    except Exception:
+        resp = web.json_response({"error": "invalid json"}, status=400)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    admin_id = data.get("admin_id")
+    match_id = data.get("match_id")
+    score1 = data.get("score1")
+    score2 = data.get("score2")
+
+    if not admin_id or not match_id or not await is_admin(int(admin_id)):
+        resp = web.json_response({"error": "unauthorized"}, status=403)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO match_results (match_id, score1, score2, updated_at)
+            VALUES (?, ?, ?, datetime('now'))
+        """, (int(match_id), int(score1), int(score2)))
+        await db.commit()
+
+    resp = web.json_response({"ok": True})
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
+async def api_get_results(request):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT match_id, score1, score2 FROM match_results") as cursor:
+            rows = await cursor.fetchall()
+            results = {str(r[0]): {"s1": r[1], "s2": r[2]} for r in rows}
+
+    resp = web.json_response(results)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/api/leaderboard", api_leaderboard)
@@ -1239,6 +1290,10 @@ async def start_web_server():
     app.router.add_route("OPTIONS", "/api/admintips", handle_options)
     app.router.add_post("/api/addxp", api_add_xp)
     app.router.add_route("OPTIONS", "/api/addxp", handle_options)
+    app.router.add_post("/api/setresult", api_set_result)
+    app.router.add_route("OPTIONS", "/api/setresult", handle_options)
+    app.router.add_get("/api/results", api_get_results)
+    app.router.add_route("OPTIONS", "/api/results", handle_options)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
