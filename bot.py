@@ -581,6 +581,8 @@ async def cmd_apply_pre_xp(message: Message):
         await db.commit()
 
     await message.answer(f"✅ Vorab-XP angewendet bei {applied} Mitgliedern (nur bei denen mit 0 XP).")
+
+@dp.message(Command("setprexp"))
 async def cmd_set_pre_xp(message: Message):
     if not await is_admin(message.from_user.id):
         return
@@ -607,6 +609,8 @@ async def cmd_set_pre_xp(message: Message):
         await db.commit()
 
     await message.answer(f"✅ {added} Vorab-XP Einträge gespeichert.\nDiese werden nur vergeben, wenn der User noch keine XP hat.")
+
+@dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     if not await is_admin(message.from_user.id):
         return
@@ -678,6 +682,8 @@ async def cmd_delete_broadcast(message: Message):
             failed += 1
 
     await message.answer(f"Gelöscht: {deleted} Nachrichten, {failed} fehlgeschlagen.")
+
+@dp.message(Command("deposits"))
 async def cmd_deposits(message: Message):
     if not await is_admin(message.from_user.id):
         return
