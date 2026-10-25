@@ -582,7 +582,31 @@ async def cmd_apply_pre_xp(message: Message):
 
     await message.answer(f"✅ Vorab-XP angewendet bei {applied} Mitgliedern (nur bei denen mit 0 XP).")
 
-@dp.message(Command("setprexp"))
+@dp.message(Command("setname"))
+async def cmd_set_name(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3 or not parts[1].isdigit():
+        await message.answer("Benutzung: /setname USER_ID Name\nBeispiel: /setname 6996727491 Doreen")
+        return
+
+    user_id = int(parts[1])
+    name = parts[2].strip()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, first_name, registered_at) VALUES (?, ?, ?, datetime('now'))",
+            (user_id, "", name)
+        )
+        await db.execute(
+            "UPDATE users SET first_name = ? WHERE user_id = ?",
+            (name, user_id)
+        )
+        await db.commit()
+
+    await message.answer(f"✅ Name für {user_id} auf '{name}' gesetzt.")
 async def cmd_set_pre_xp(message: Message):
     if not await is_admin(message.from_user.id):
         return
