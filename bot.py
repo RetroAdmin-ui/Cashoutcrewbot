@@ -589,26 +589,34 @@ async def cmd_set_pre_xp(message: Message):
 
     text = message.text.removeprefix("/setprexp").strip()
     if not text:
-        await message.answer("Benutzung:\n/setprexp\n123456789 500\n987654321 1200\n...")
+        await message.answer("Benutzung:\n/setprexp\n123456789 500 Name\n987654321 1200 AndererName")
         return
 
     lines = text.splitlines()
     added = 0
     async with aiosqlite.connect(DB_PATH) as db:
         for line in lines:
-            parts = line.strip().split()
-            if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+            parts = line.strip().split(maxsplit=2)
+            if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
                 continue
             user_id = int(parts[0])
             xp = int(parts[1])
+            name = parts[2] if len(parts) > 2 else ""
+
+            # Save preassigned XP
             await db.execute(
                 "INSERT OR REPLACE INTO preassigned_xp (user_id, xp, added_at) VALUES (?, ?, datetime('now'))",
                 (user_id, xp)
             )
+            # Also register as member
+            await db.execute(
+                "INSERT OR IGNORE INTO users (user_id, username, first_name, registered_at) VALUES (?, ?, ?, datetime('now'))",
+                (user_id, "", name)
+            )
             added += 1
         await db.commit()
 
-    await message.answer(f"✅ {added} Vorab-XP Einträge gespeichert.\nDiese werden nur vergeben, wenn der User noch keine XP hat.")
+    await message.answer(f"✅ {added} Einträge gespeichert (XP + als Mitglied angelegt).")
 
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
