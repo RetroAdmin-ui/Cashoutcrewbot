@@ -77,6 +77,22 @@ async def init_db():
                 UNIQUE(user_id, match_id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS broadcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_text TEXT,
+                sent_at TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS broadcast_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broadcast_id INTEGER,
+                user_id INTEGER,
+                message_id INTEGER,
+                FOREIGN KEY (broadcast_id) REFERENCES broadcasts (id)
+            )
+        """)
         # Initiale Admins aus ENV eintragen (nur wenn noch nicht vorhanden)
         for admin_id in INITIAL_ADMIN_IDS:
             await db.execute(
@@ -525,21 +541,65 @@ async def cmd_broadcast(message: Message):
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT user_id FROM users") as cursor:
             users = await cursor.fetchall()
+        cursor = await db.execute(
+            "INSERT INTO broadcasts (message_text, sent_at) VALUES (?, datetime('now'))",
+            (text,)
+        )
+        broadcast_id = cursor.lastrowid
+        await db.commit()
 
     sent = 0
     failed = 0
     for (user_id,) in users:
         try:
-            await bot.send_message(user_id, text)
+            msg = await bot.send_message(user_id, text)
             sent += 1
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute(
+                    "INSERT INTO broadcast_messages (broadcast_id, user_id, message_id) VALUES (?, ?, ?)",
+                    (broadcast_id, user_id, msg.message_id)
+                )
+                await db.commit()
             await asyncio.sleep(0.05)
         except Exception:
             failed += 1
 
-    await message.answer(f"Rundmail gesendet: {sent} erfolgreich, {failed} fehlgeschlagen.")
+    await message.answer(f"Rundmail gesendet: {sent} erfolgreich, {failed} fehlgeschlagen.\nID: {broadcast_id}\n\nZum Löschen: /deletebroadcast {broadcast_id}")
 
 
-@dp.message(Command("deposits"))
+@dp.message(Command("deletebroadcast"))
+async def cmd_delete_broadcast(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Benutzung: /deletebroadcast ID\n\nDie ID bekommst du nach dem Senden einer Rundmail.")
+        return
+
+    broadcast_id = int(parts[1])
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, message_id FROM broadcast_messages WHERE broadcast_id = ?",
+            (broadcast_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+    if not rows:
+        await message.answer("Keine Nachrichten für diese Broadcast-ID gefunden.")
+        return
+
+    deleted = 0
+    failed = 0
+    for user_id, msg_id in rows:
+        try:
+            await bot.delete_message(user_id, msg_id)
+            deleted += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
+    await message.answer(f"Gelöscht: {deleted} Nachrichten, {failed} fehlgeschlagen.")
 async def cmd_deposits(message: Message):
     if not await is_admin(message.from_user.id):
         return
@@ -601,6 +661,7 @@ async def cmd_help(message: Message):
         await message.answer(
             "Admin-Befehle:\n"
             "/broadcast Text – Rundmail an alle\n"
+            "/deletebroadcast ID – Rundmail bei allen löschen\n"
             "/deposits – Letzte Einzahlungen anzeigen\n"
             "/users – Mitgliederliste\n"
             "/addadmin ID – Admin hinzufügen\n"
