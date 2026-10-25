@@ -608,11 +608,16 @@ async def cmd_set_pre_xp(message: Message):
                 "INSERT OR REPLACE INTO preassigned_xp (user_id, xp, added_at) VALUES (?, ?, datetime('now'))",
                 (user_id, xp)
             )
-            # Also register as member
+            # Also register as member and update name if provided
             await db.execute(
                 "INSERT OR IGNORE INTO users (user_id, username, first_name, registered_at) VALUES (?, ?, ?, datetime('now'))",
                 (user_id, "", name)
             )
+            if name:
+                await db.execute(
+                    "UPDATE users SET first_name = ? WHERE user_id = ? AND (first_name IS NULL OR first_name = '' OR first_name = 'Unbekannt')",
+                    (name, user_id)
+                )
             added += 1
         await db.commit()
 
