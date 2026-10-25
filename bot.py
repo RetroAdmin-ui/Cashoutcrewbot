@@ -601,7 +601,7 @@ async def cmd_set_pre_xp(message: Message):
                 continue
             user_id = int(parts[0])
             xp = int(parts[1])
-            name = parts[2] if len(parts) > 2 else ""
+            name = parts[2].strip() if len(parts) > 2 else ""
 
             # Save preassigned XP
             await db.execute(
