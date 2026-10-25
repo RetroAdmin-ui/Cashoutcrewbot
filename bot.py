@@ -146,6 +146,9 @@ async def check_level_up(user_id: int, old_xp: int, new_xp: int):
             await bot.send_message(user_id, text)
         except Exception:
             pass
+
+
+async def is_admin(user_id: int) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)) as cursor:
             return await cursor.fetchone() is not None
