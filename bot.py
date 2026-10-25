@@ -995,6 +995,46 @@ async def api_admin_tips(request):
     return resp
 
 
+async def api_add_xp(request):
+    try:
+        data = await request.json()
+    except Exception:
+        resp = web.json_response({"error": "invalid json"}, status=400)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    user_id = data.get("user_id")
+    xp = data.get("xp")
+
+    if not user_id or xp is None:
+        resp = web.json_response({"error": "missing data"}, status=400)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    user_id = int(user_id)
+    xp = int(xp)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        if xp > 0:
+            await db.execute("""
+                INSERT INTO deposits (user_id, caption, xp, tickets, confirmed, created_at)
+                VALUES (?, ?, ?, 0, 1, datetime('now'))
+            """, (user_id, "Blackjack Gewinn", xp))
+        else:
+            # Deduct by inserting negative or adjusting
+            await db.execute("""
+                INSERT INTO deposits (user_id, caption, xp, tickets, confirmed, created_at)
+                VALUES (?, ?, ?, 0, 1, datetime('now'))
+            """, (user_id, "Blackjack Verlust", xp))
+        await db.commit()
+
+    resp = web.json_response({"ok": True})
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    return resp
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/api/leaderboard", api_leaderboard)
@@ -1014,6 +1054,8 @@ async def start_web_server():
     app.router.add_route("OPTIONS", "/api/mytips", handle_options)
     app.router.add_get("/api/admintips", api_admin_tips)
     app.router.add_route("OPTIONS", "/api/admintips", handle_options)
+    app.router.add_post("/api/addxp", api_add_xp)
+    app.router.add_route("OPTIONS", "/api/addxp", handle_options)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
