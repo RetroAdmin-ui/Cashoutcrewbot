@@ -142,18 +142,33 @@ def get_level(xp: int) -> int:
             break
     return level
 
-async def check_level_up(user_id: int, old_xp: int, new_xp: int):
+async def check_level_up(user_id: int, old_xp: int, new_xp: int, username: str = ""):
     old_level = get_level(old_xp)
     new_level = get_level(new_xp)
     if new_level > old_level:
-        reward = LEVEL_REWARDS.get(new_level, "")
-        text = f"🎉 Glückwunsch! Du hast Level {new_level} erreicht!"
-        if reward:
-            text += f"\n\nBelohnung: {reward}"
+        reward = LEVEL_REWARDS.get(new_level, "siehe Level-Übersicht")
+        # An das Mitglied
+        user_text = (
+            f"🎉 LEVEL UP!\n\n"
+            f"🥳 Herzlichen Glückwunsch!\n\n"
+            f"⭐ Du hast Level {new_level} erreicht!\n\n"
+            f"🎁 Deine Belohnung:\n{reward}\n\n"
+            f"📩 Bitte melde dich bei einem Admin, um deine Belohnung zu erhalten.\n\n"
+            f"🍀 Vielen Dank, dass du Teil der Cashout Crew bist!"
+        )
         try:
-            await bot.send_message(user_id, text)
+            await bot.send_message(user_id, user_text)
         except Exception:
             pass
+        # An die Admins
+        name = f"@{username}" if username else str(user_id)
+        admin_text = f"📈 Level-Up: {name} hat Level {new_level} erreicht (XP: {new_xp})"
+        admin_ids = await get_admin_ids()
+        for admin_id in admin_ids:
+            try:
+                await bot.send_message(admin_id, admin_text)
+            except Exception:
+                pass
 
 
 async def is_admin(user_id: int) -> bool:
@@ -403,9 +418,20 @@ async def cb_confirm(callback: CallbackQuery):
         caption=callback.message.caption + "\n\n✅ Bestätigt",
         reply_markup=None
     )
-    # Benachrichtigung an den User
+    # Benachrichtigung an den User + Level-Up Check
     if row:
         user_id, xp, tickets = row
+        # Get total XP after confirmation
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT COALESCE(SUM(xp), 0) FROM deposits WHERE user_id = ? AND confirmed = 1", (user_id,)) as c:
+                total_xp = (await c.fetchone())[0]
+            async with db.execute("SELECT username FROM users WHERE user_id = ?", (user_id,)) as c:
+                user_row = await c.fetchone()
+                username = user_row[0] if user_row else ""
+        # Level-Up Check (old_xp = total - this deposit's xp)
+        old_xp = total_xp - (xp or 0)
+        await check_level_up(user_id, old_xp, total_xp, username)
+        # Confirmation message
         text = f"✅ Deine Einzahlung wurde bestätigt!\n\nXP: +{xp or 0}"
         if tickets:
             text += f"\nTickets: +{tickets}"
