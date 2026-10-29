@@ -534,7 +534,7 @@ async def cmd_mystats(message: Message):
         """, (user_id,)) as cursor:
             row = await cursor.fetchone()
             xp = row[0] if row else 0
-    level = (xp // 100) + 1
+    level = get_level(xp)
     await message.answer(
         f"Deine Werte:\n\n"
         f"⭐ XP: {xp}\n"
