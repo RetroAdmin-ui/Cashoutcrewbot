@@ -19,7 +19,7 @@ INITIAL_ADMIN_IDS = [6448282988]
 env_admins = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 INITIAL_ADMIN_IDS.extend(env_admins)
 
-MINI_APP_URL = "https://lingering-base-8871.maxwindani-a8b.workers.dev"
+MINI_APP_URL = "https://tg-miniapp-2.emergent.host"
 
 # Feste Tastatur unten – Button sendet Text, Bot antwortet mit persönlichem Link
 mini_app_keyboard = ReplyKeyboardMarkup(
