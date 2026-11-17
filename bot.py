@@ -247,10 +247,11 @@ async def cmd_app(message: Message):
 
 @dp.message(F.photo)
 async def handle_photo(message: Message):
-    # Ignore photos that are meant as broadcast
     caption = message.caption or ""
+    # Foto-Rundmail von Admins direkt verarbeiten
     if caption.strip().startswith("/broadcast") and await is_admin(message.from_user.id):
-        return  # Wird vom Broadcast-Handler verarbeitet
+        await cmd_broadcast(message)
+        return
 
     user = message.from_user
     photo = message.photo[-1]  # höchste Auflösung
@@ -779,7 +780,7 @@ async def cmd_set_pre_xp(message: Message):
     await message.answer(f"✅ {added} Einträge gespeichert (XP + als Mitglied angelegt).")
 
 @dp.message(Command("broadcast"))
-@dp.message(F.photo & F.caption.startswith("/broadcast"))
+@dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     if not await is_admin(message.from_user.id):
         return
