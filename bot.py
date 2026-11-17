@@ -778,9 +778,26 @@ async def cmd_broadcast(message: Message):
     if not await is_admin(message.from_user.id):
         return
 
-    text = message.text.removeprefix("/broadcast").strip()
-    if not text:
-        await message.answer("Benutzung: /broadcast Deine Nachricht hier")
+    # Check if it's a photo with /broadcast in caption, or reply to a photo
+    photo = None
+    caption_text = ""
+
+    if message.photo:
+        photo = message.photo[-1]
+        caption_text = (message.caption or "").removeprefix("/broadcast").strip()
+    elif message.reply_to_message and message.reply_to_message.photo:
+        photo = message.reply_to_message.photo[-1]
+        caption_text = message.text.removeprefix("/broadcast").strip()
+    else:
+        caption_text = message.text.removeprefix("/broadcast").strip()
+
+    if not caption_text and not photo:
+        await message.answer(
+            "Benutzung:\n"
+            "• /broadcast Dein Text\n"
+            "• Foto mit Caption /broadcast Dein Text\n"
+            "• Oder auf ein Foto antworten mit /broadcast Dein Text"
+        )
         return
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -788,7 +805,7 @@ async def cmd_broadcast(message: Message):
             users = await cursor.fetchall()
         cursor = await db.execute(
             "INSERT INTO broadcasts (message_text, sent_at) VALUES (?, datetime('now'))",
-            (text,)
+            (caption_text or "[Bild]",)
         )
         broadcast_id = cursor.lastrowid
         await db.commit()
@@ -797,7 +814,14 @@ async def cmd_broadcast(message: Message):
     failed = 0
     for (user_id,) in users:
         try:
-            msg = await bot.send_message(user_id, text)
+            if photo:
+                msg = await bot.send_photo(
+                    user_id,
+                    photo.file_id,
+                    caption=caption_text or None
+                )
+            else:
+                msg = await bot.send_message(user_id, caption_text)
             sent += 1
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute(
@@ -809,7 +833,11 @@ async def cmd_broadcast(message: Message):
         except Exception:
             failed += 1
 
-    await message.answer(f"Rundmail gesendet: {sent} erfolgreich, {failed} fehlgeschlagen.\nID: {broadcast_id}\n\nZum Löschen: /deletebroadcast {broadcast_id}")
+    await message.answer(
+        f"Rundmail gesendet: {sent} erfolgreich, {failed} fehlgeschlagen.\n"
+        f"ID: {broadcast_id}\n\n"
+        f"Zum Löschen: /deletebroadcast {broadcast_id}"
+    )
 
 
 @dp.message(Command("deletebroadcast"))
@@ -907,7 +935,7 @@ async def cmd_help(message: Message):
     if await is_admin(message.from_user.id):
         await message.answer(
             "Admin-Befehle:\n"
-            "/broadcast Text – Rundmail an alle\n"
+            "/broadcast Text – Rundmail an alle (auch mit Bild)\n"
             "/deletebroadcast ID – Rundmail bei allen löschen\n"
             "/deposits – Letzte Einzahlungen anzeigen\n"
             "/users – Mitgliederliste\n"
